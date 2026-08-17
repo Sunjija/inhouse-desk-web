@@ -32,6 +32,7 @@ const $$ = (selector, root = document) => [...root.querySelectorAll(selector)];
 const escapeHtml = (value = "") => String(value).replace(/[&<>'"]/g, (char) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", "'": "&#39;", '"': "&quot;" }[char]));
 const percent = (value) => `${Math.round(Number(value || 0) * 100)}%`;
 const compact = (value) => Number(value || 0).toFixed(2).replace(/\.00$/, "");
+const displayPlayerName = (player) => player.displayName || player.name;
 
 function saveSelection() {
   localStorage.setItem("inhouse:selected", JSON.stringify(state.selected));
@@ -57,7 +58,13 @@ function tierScore(player) {
 
 function roleFit(player, role) {
   if (player.roleLock && role !== player.roleLock) return 0;
+  if (player.manualRolesOnly) {
+    if (!player.manualRoles?.includes(role)) return 0;
+    const roleRecord = player.roles.find((item) => item.role === role);
+    return 120 + Math.min(18, Number(roleRecord?.games || 0) * 2) + Number(player.rolePreference?.[role] || 0);
+  }
   let score = 8;
+  if (player.manualRoles?.includes(role)) score += 76;
   if (player.primaryRole === role) score += 92;
   if (player.secondaryRole?.includes(role)) score += 64;
   const roleRecord = player.roles.find((item) => item.role === role);
@@ -70,7 +77,8 @@ function roleFit(player, role) {
 
 function eligibleRoles(player) {
   if (player.roleLock) return [player.roleLock];
-  const roles = new Set([player.primaryRole]);
+  if (player.manualRolesOnly) return [...player.manualRoles];
+  const roles = new Set([player.primaryRole, ...(player.manualRoles || [])]);
   ROLES.forEach((role) => {
     if (player.secondaryRole?.includes(role) || player.roles.some((item) => item.role === role && item.games > 0)) roles.add(role);
   });
@@ -84,6 +92,21 @@ function secondaryRoleLabel(player) {
 
 function isOffRole(player, role) {
   return roleFit(player, role) < 55;
+}
+
+function assignedPower(player, role) {
+  return Math.round(Number(player.rolePower?.[role] ?? tierScore(player)));
+}
+
+function preferredTeammatePenalty(blue, red) {
+  const all = [...Object.values(blue), ...Object.values(red)];
+  return [blue, red].reduce((penalty, team) => {
+    const members = Object.values(team);
+    return penalty + members.reduce((memberPenalty, player) => memberPenalty + (player.preferredTeammates || []).reduce((sum, preferredName) => {
+      const preferred = all.find((candidate) => candidate.name.startsWith(preferredName));
+      return sum + Number(preferred && !members.includes(preferred)) * 8;
+    }, 0), 0);
+  }, 0);
 }
 
 function playerById(id) {
@@ -183,7 +206,7 @@ function renderRoleFilters() {
 }
 
 function searchableText(player) {
-  return [player.name, player.riotId, player.primaryRole, player.secondaryRole, ...player.championRecords.map((record) => record.champion), ...player.pool.map((item) => item.champion)].join(" ").toLowerCase();
+  return [player.name, displayPlayerName(player), player.riotId, player.primaryRole, player.secondaryRole, ...player.championRecords.map((record) => record.champion), ...player.pool.map((item) => item.champion)].join(" ").toLowerCase();
 }
 
 function renderRoster() {
@@ -199,7 +222,7 @@ function renderRoster() {
     return `<button class="roster-row ${selected ? "is-selected" : ""} ${disabled ? "is-disabled" : ""}" data-player-select="${player.id}" ${disabled ? "disabled" : ""}>
       <span class="roster-name">
         <span class="role-glyph" data-role="${player.primaryRole}">${ROLE_SHORT[player.primaryRole] || "ALL"}</span>
-        <span class="roster-copy"><strong>${escapeHtml(player.name)}</strong><small>${escapeHtml(player.currentTier)} · ${player.games}경기</small></span>
+        <span class="roster-copy"><strong>${escapeHtml(displayPlayerName(player))}</strong><small>${escapeHtml(player.currentTier)} · ${player.games}경기</small></span>
       </span>
       <span class="selection-box">✓</span>
     </button>`;
@@ -225,7 +248,7 @@ function renderSelectedStage() {
   }
   $("#selected-stage").innerHTML = `<div class="selection-summary"><p>선수 정보는 참가자 이름을 눌러 자세히 볼 수 있습니다.</p><div class="selected-grid">${state.selected.map((id, index) => {
     const player = playerById(id);
-    return `<div class="selected-strip"><span class="strip-index">${String(index + 1).padStart(2, "0")}</span><span class="roster-copy" data-player-detail="${player.id}" role="button" tabindex="0"><strong>${escapeHtml(player.name)}</strong><small>${escapeHtml(player.primaryRole)} · ${escapeHtml(player.currentTier)}</small></span><button data-remove-player="${player.id}" aria-label="${escapeHtml(player.name)} 선택 해제">제거</button></div>`;
+    return `<div class="selected-strip"><span class="strip-index">${String(index + 1).padStart(2, "0")}</span><span class="roster-copy" data-player-detail="${player.id}" role="button" tabindex="0"><strong>${escapeHtml(displayPlayerName(player))}</strong><small>${escapeHtml(player.primaryRole)} · ${escapeHtml(player.currentTier)}</small></span><button data-remove-player="${player.id}" aria-label="${escapeHtml(displayPlayerName(player))} 선택 해제">제거</button></div>`;
   }).join("")}</div></div>`;
 }
 
@@ -273,16 +296,28 @@ function createBalancedTeams() {
       blue[role] = pair[flip];
       red[role] = pair[1 - flip];
     });
-    const bluePower = ROLES.reduce((sum, role) => sum + tierScore(blue[role]), 0);
-    const redPower = ROLES.reduce((sum, role) => sum + tierScore(red[role]), 0);
+    const laneGaps = ROLES.map((role) => Math.abs(assignedPower(blue[role], role) - assignedPower(red[role], role)));
+    const bluePower = ROLES.reduce((sum, role) => sum + assignedPower(blue[role], role), 0);
+    const redPower = ROLES.reduce((sum, role) => sum + assignedPower(red[role], role), 0);
+    const totalGap = Math.abs(bluePower - redPower);
+    const maxLaneGap = Math.max(...laneGaps);
+    const laneGapCost = laneGaps.reduce((sum, gap) => sum + gap * 1.35 + Math.max(0, gap - 6) * 2.8, 0);
     const offRoles = ROLES.reduce((sum, role) => sum + Number(isOffRole(blue[role], role)) + Number(isOffRole(red[role], role)), 0);
-    const cost = Math.abs(bluePower - redPower) + offRoles * 12;
-    if (!best || cost < best.cost) best = { blue, red, cost };
+    const blueCallers = ROLES.filter((role) => blue[role].shotCaller).length;
+    const redCallers = ROLES.filter((role) => red[role].shotCaller).length;
+    const callerGap = Math.abs(blueCallers - redCallers);
+    const peerMatchBonus = ROLES.reduce((sum, role) => {
+      const group = blue[role].balanceGroup;
+      return sum + Number(group && group === red[role].balanceGroup) * 10;
+    }, 0);
+    const teammatePenalty = preferredTeammatePenalty(blue, red);
+    const cost = totalGap * .45 + laneGapCost + maxLaneGap * 1.2 + offRoles * 16 + callerGap * 14 + teammatePenalty - peerMatchBonus;
+    if (!best || cost < best.cost) best = { blue, red, cost, laneGaps, maxLaneGap, callerGap };
   }
   state.teams = { blue: best.blue, red: best.red };
   state.draftActions = [];
   renderEverything();
-  showToast("주라인과 전력 차이를 함께 계산해 편성했습니다.");
+  showToast("라인별 전력 차이와 오더 분배까지 계산해 편성했습니다.");
 }
 
 function renderLineup(team) {
@@ -295,7 +330,7 @@ function renderLineup(team) {
     return `<div class="lineup-slot ${offRole ? "is-offrole" : ""}" data-team="${team}" data-role="${role}">
       <span class="slot-role">${role}</span>
       <div class="slot-player" data-player-detail="${player.id}" role="button" tabindex="0">
-        <strong>${escapeHtml(player.name)}</strong>
+        <strong>${escapeHtml(displayPlayerName(player))}</strong>
         <small class="${offRole ? "offrole-note" : ""}">${offRole ? "라인 이탈 · " : ""}${escapeHtml(player.currentTier)} · ${player.games}경기</small>
         <div class="slot-champs">${champs.map((champion) => championPortrait(champion)).join("")}</div>
       </div>
@@ -304,7 +339,7 @@ function renderLineup(team) {
 }
 
 function teamPower(team) {
-  return ROLES.reduce((sum, role) => sum + tierScore(state.teams[team][role]), 0);
+  return ROLES.reduce((sum, role) => sum + assignedPower(state.teams[team][role], role), 0);
 }
 
 function renderTeams() {
@@ -317,7 +352,7 @@ function renderTeams() {
   $("#swap-rail").innerHTML = ROLES.map((role) => `<button class="swap-button" data-swap-role="${role}" title="${role} 선수 교체" aria-label="${role} 선수 교체">↔</button>`).join("");
 }
 
-function candidateScore(player, item) {
+function candidateScore(player, item, mode = "pick", role = player.primaryRole) {
   const internal = player.championRecords.filter((record) => record.champion === item.champion);
   const internalGames = internal.reduce((sum, record) => sum + record.games, 0);
   const internalWins = internal.reduce((sum, record) => sum + record.wins, 0);
@@ -325,10 +360,12 @@ function candidateScore(player, item) {
   const success = internalGames ? (internalWins / internalGames) * 12 : 4;
   const mastery = Math.min(36, (item.masteryScore || 0) * .42);
   const roleMatch = item.role?.includes(player.primaryRole) ? 8 : 0;
-  return Math.round(repeated + success + mastery + roleMatch);
+  const playerStrength = assignedPower(player, role);
+  const tierThreat = mode === "ban" ? clamp((playerStrength - 50) * 1.5, -8, 20) : clamp((playerStrength - 45) * .18, -2, 5);
+  return Math.round(repeated + success + mastery + roleMatch + tierThreat);
 }
 
-function teamCandidates(team, limit = 5) {
+function teamCandidates(team, limit = 5, mode = "pick") {
   const all = [];
   ROLES.forEach((role) => {
     const player = state.teams[team][role];
@@ -337,7 +374,7 @@ function teamCandidates(team, limit = 5) {
     player.championRecords.slice(0, 8).forEach((record) => {
       if (!merged.has(record.champion)) merged.set(record.champion, { champion: record.champion, role: record.role, masteryScore: 38, grade: record.sample, internalGames: record.games });
     });
-    merged.forEach((item) => all.push({ ...item, player, score: candidateScore(player, item), role }));
+    merged.forEach((item) => all.push({ ...item, player, score: candidateScore(player, item, mode, role), role }));
   });
   const unique = new Map();
   all.sort((a, b) => b.score - a.score).forEach((item) => {
@@ -368,8 +405,8 @@ function renderInsights() {
     isOffRole(state.teams.red[role], role) ? `레드 ${role}: ${state.teams.red[role].name}` : null,
   ]).filter(Boolean);
   const opponent = state.mySide === "blue" ? "red" : "blue";
-  const bans = teamCandidates(opponent, 5);
-  const comforts = teamCandidates(state.mySide, 5);
+  const bans = teamCandidates(opponent, 5, "ban");
+  const comforts = teamCandidates(state.mySide, 5, "pick");
   $("#insight-content").innerHTML = `
     <div>
       <div class="balance-readout"><div><strong>팀 균형</strong><span>차이 ${Math.abs(bluePower - redPower)}점</span></div><div class="balance-bar" style="--blue-share:${blueShare}%"><i></i></div>
@@ -433,12 +470,15 @@ function roleCandidateEntries(player, role, mode) {
     const mastery = Number(entry.pool?.masteryScore || (internalGames ? 54 : 36));
     const adjustedWinRate = (internalWins + 1.5) / (internalGames + 3);
     const confidence = 1 - Math.exp(-internalGames / 2.25);
-    const declared = player.primaryRole === role ? 8 : player.secondaryRole?.includes(role) ? 5 : 2;
+    const declared = player.primaryRole === role ? 7 : player.secondaryRole?.includes(role) ? 4 : 1;
     const grade = GRADE_SCORE[entry.pool?.grade] || 0;
-    const rankValue = Math.max(0, 7 - entry.rank * .55);
-    const targetValue = mode === "ban" ? Math.min(8, internalGames * 1.7) : 0;
+    const rankValue = Math.max(0, 6 - entry.rank * .5);
+    const targetValue = mode === "ban" ? Math.min(7, internalGames * 1.5) : 0;
+    const playerStrength = assignedPower(player, role);
+    const tierThreat = mode === "ban" ? clamp((playerStrength - 50) * 1.5, -8, 20) : clamp((playerStrength - 45) * .16, -2, 4);
     const score = clamp(Math.round(
-      40 + mastery * .30 + confidence * 17 + (adjustedWinRate - .5) * 20 + declared + grade + rankValue + targetValue
+      24 + mastery * .24 + confidence * 11 + (adjustedWinRate - .5) * 12
+        + declared + grade * .8 + rankValue + targetValue + tierThreat
     ), 42, 96);
     return {
       champion: entry.champion,
@@ -448,6 +488,8 @@ function roleCandidateEntries(player, role, mode) {
       internalGames,
       adjustedWinRate,
       mastery,
+      playerStrength,
+      tierThreat,
       grade: entry.pool?.grade || (internalGames ? "내전 기록" : "가능"),
     };
   });
@@ -506,6 +548,7 @@ function draftRecommendations(limit = 7) {
 
 function draftEvidence(item) {
   if (item.fallback) return "챔프폭 근거 부족 · 라인 공용 후보";
+  if (item.tierThreat >= 8) return `고티어 핵심픽 · 숙련 ${Math.round(item.mastery)}`;
   if (item.internalGames) return `내전 ${item.internalGames}경기 · 보정 승률 ${Math.round(item.adjustedWinRate * 100)}%`;
   return `${item.grade} · 장기 숙련 ${Math.round(item.mastery)}`;
 }
@@ -615,12 +658,15 @@ function renderPlayerDirectory() {
   const players = state.data.players.filter((player) => !query || searchableText(player).includes(query));
   $("#player-directory").innerHTML = players.map((player) => {
     const champs = player.championRecords.slice(0, 4).map((item) => item.champion);
-    return `<button class="player-card" data-player-detail="${player.id}"><header><div><h3>${escapeHtml(player.name)}</h3><p>${escapeHtml(player.currentTier)} · 최고 ${escapeHtml(player.peakTier)}</p></div><span class="role-tag">${escapeHtml(player.primaryRole)}</span></header><div class="player-card-stats"><div><span>내전</span><strong>${player.games}경기</strong></div><div><span>승률</span><strong>${percent(player.winRate)}</strong></div><div><span>KDA</span><strong>${compact(player.kda)}</strong></div></div><div class="champion-line"><div class="slot-champs">${champs.map((champion) => championPortrait(champion)).join("")}</div><span>${escapeHtml(player.headlineChampions)}</span></div></button>`;
+    return `<button class="player-card" data-player-detail="${player.id}"><header><div><h3>${escapeHtml(displayPlayerName(player))}</h3><p>${escapeHtml(player.currentTier)} · 최고 ${escapeHtml(player.peakTier)}</p></div><span class="role-tag">${escapeHtml(player.primaryRole)}</span></header><div class="player-card-stats"><div><span>내전</span><strong>${player.games}경기</strong></div><div><span>승률</span><strong>${percent(player.winRate)}</strong></div><div><span>KDA</span><strong>${compact(player.kda)}</strong></div></div><div class="champion-line"><div class="slot-champs">${champs.map((champion) => championPortrait(champion)).join("")}</div><span>${escapeHtml(player.headlineChampions)}</span></div></button>`;
   }).join("");
 }
 
 function gameDetailMarkup(game) {
-  return game.teams.map((team) => `<section class="game-team ${team.result === "승" ? "is-winner" : ""}"><header><span>${team.team}팀</span><strong>${team.result}</strong></header>${team.players.map((player) => `<div class="game-player"><span>${player.role}</span>${championPortrait(player.champion, 34)}<strong>${escapeHtml(player.player)}</strong><small>${player.kills}/${player.deaths}/${player.assists}</small></div>`).join("")}</section>`).join("");
+  return game.teams.map((team) => `<section class="game-team ${team.result === "승" ? "is-winner" : ""}"><header><span>${team.team}팀</span><strong>${team.result}</strong></header>${team.players.map((player) => {
+    const registered = state.data.players.find((item) => item.name === player.player);
+    return `<div class="game-player"><span>${player.role}</span>${championPortrait(player.champion, 34)}<strong>${escapeHtml(registered ? displayPlayerName(registered) : player.player)}</strong><small>${player.kills}/${player.deaths}/${player.assists}</small></div>`;
+  }).join("")}</section>`).join("");
 }
 
 function renderGames() {
@@ -642,7 +688,7 @@ function openPlayerDetail(id) {
   const player = playerById(id);
   if (!player) return;
   const secondary = secondaryRoleLabel(player);
-  $("#player-detail").innerHTML = `<div class="detail-head"><h2>${escapeHtml(player.name)}</h2><p>${escapeHtml(player.riotId)} · 주라인 ${escapeHtml(player.primaryRole)}${secondary !== "없음" ? ` · 가능 ${escapeHtml(secondary)}` : ""}</p></div><div class="detail-facts"><div><span>현재 / 최고 티어</span><strong>${escapeHtml(player.currentTier)} / ${escapeHtml(player.peakTier)}</strong></div><div><span>내전 표본</span><strong>${player.games}경기 ${player.wins}승 ${player.losses}패</strong></div><div><span>승률</span><strong>${percent(player.winRate)}</strong></div><div><span>KDA</span><strong>${compact(player.kda)}</strong></div></div><section class="detail-section"><h3>내전 챔피언 기록</h3><table class="record-table"><thead><tr><th>챔피언</th><th>라인</th><th>경기</th><th>승률</th><th>KDA</th><th>표본</th></tr></thead><tbody>${player.championRecords.slice(0, 12).map((record) => `<tr><td><strong>${escapeHtml(record.champion)}</strong></td><td>${record.role}</td><td>${record.games}</td><td>${percent(record.winRate)}</td><td>${compact(record.kda)}</td><td>${escapeHtml(record.sample)}</td></tr>`).join("")}</tbody></table></section><section class="detail-section"><h3>전적 기반 챔프폭</h3><div class="pool-list">${player.pool.slice(0, 14).map((item) => `<div class="pool-row">${championPortrait(item.champion, 34)}<span><strong>${escapeHtml(item.champion)}</strong><small>${escapeHtml(item.role)} · 숙련 ${Math.round(item.masteryScore)}</small></span><span class="grade" data-grade="${escapeHtml(item.grade)}">${escapeHtml(item.grade)}</span></div>`).join("") || `<p>연결된 장기 전적 데이터가 없습니다.</p>`}</div></section>`;
+  $("#player-detail").innerHTML = `<div class="detail-head"><h2>${escapeHtml(displayPlayerName(player))}</h2><p>${escapeHtml(player.riotId)} · 주라인 ${escapeHtml(player.primaryRole)}${secondary !== "없음" ? ` · 가능 ${escapeHtml(secondary)}` : ""}</p></div><div class="detail-facts"><div><span>현재 / 최고 티어</span><strong>${escapeHtml(player.currentTier)} / ${escapeHtml(player.peakTier)}</strong></div><div><span>내전 표본</span><strong>${player.games}경기 ${player.wins}승 ${player.losses}패</strong></div><div><span>승률</span><strong>${percent(player.winRate)}</strong></div><div><span>KDA</span><strong>${compact(player.kda)}</strong></div></div><section class="detail-section"><h3>내전 챔피언 기록</h3><table class="record-table"><thead><tr><th>챔피언</th><th>라인</th><th>경기</th><th>승률</th><th>KDA</th><th>표본</th></tr></thead><tbody>${player.championRecords.slice(0, 12).map((record) => `<tr><td><strong>${escapeHtml(record.champion)}</strong></td><td>${record.role}</td><td>${record.games}</td><td>${percent(record.winRate)}</td><td>${compact(record.kda)}</td><td>${escapeHtml(record.sample)}</td></tr>`).join("")}</tbody></table></section><section class="detail-section"><h3>전적 기반 챔프폭</h3><div class="pool-list">${player.pool.slice(0, 14).map((item) => `<div class="pool-row">${championPortrait(item.champion, 34)}<span><strong>${escapeHtml(item.champion)}</strong><small>${escapeHtml(item.role)} · 숙련 ${Math.round(item.masteryScore)}</small></span><span class="grade" data-grade="${escapeHtml(item.grade)}">${escapeHtml(item.grade)}</span></div>`).join("") || `<p>연결된 장기 전적 데이터가 없습니다.</p>`}</div></section>`;
   $("#player-dialog").showModal();
 }
 
