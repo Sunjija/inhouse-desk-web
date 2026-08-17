@@ -1,0 +1,170 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="robots" content="noindex,nofollow">
+  <meta name="theme-color" content="#0b1220">
+  <title>내전 데스크</title>
+  <link rel="preconnect" href="https://cdn.jsdelivr.net">
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/gh/orioncactus/pretendard/dist/web/static/pretendard.css">
+  <link rel="stylesheet" href="styles.css?v=20260818-6">
+</head>
+<body>
+  <header class="topbar">
+    <a class="brand" href="#planner" aria-label="내전 데스크 홈">
+      <span class="brand-mark" aria-hidden="true"><i></i><i></i><i></i></span>
+      <span><strong>내전 데스크</strong><small>18경기 검수 데이터</small></span>
+    </a>
+    <nav class="primary-nav" aria-label="주요 화면">
+      <button class="nav-item is-active" data-view="planner">오늘 내전</button>
+      <button class="nav-item" data-view="players">참가자</button>
+      <button class="nav-item" data-view="games">경기 기록</button>
+    </nav>
+    <div class="topbar-meta">
+      <span class="privacy-state"><span></span> 로컬 데이터</span>
+      <button class="ghost-button" id="reset-session">선택 초기화</button>
+    </div>
+  </header>
+
+  <main>
+    <section class="app-view is-active" id="view-planner" aria-labelledby="planner-title">
+      <header class="page-heading">
+        <div>
+          <h1 id="planner-title">오늘 출전할 10명을 정합니다.</h1>
+          <p>참가자를 고른 뒤 자동 편성으로 라인을 맞추고, 필요하면 같은 라인의 두 선수를 바로 교체하세요.</p>
+        </div>
+        <div class="data-stamp">
+          <span>데이터 기준</span>
+          <strong id="data-date">-</strong>
+        </div>
+      </header>
+
+      <div class="planner-layout">
+        <aside class="roster-panel" aria-labelledby="roster-title">
+          <div class="section-heading">
+            <div>
+              <h2 id="roster-title">참가자 풀</h2>
+              <p><strong id="selected-count">0</strong>/10명 선택</p>
+            </div>
+            <button class="text-button" id="load-recent">최근 10명</button>
+          </div>
+          <label class="search-field">
+            <span class="sr-only">참가자 검색</span>
+            <input id="roster-search" type="search" placeholder="이름, 닉네임, 챔피언 검색">
+            <kbd>/</kbd>
+          </label>
+          <div class="role-filters" id="role-filters" aria-label="라인 필터"></div>
+          <div class="roster-list" id="roster-list" aria-live="polite"></div>
+        </aside>
+
+        <section class="team-workspace" aria-labelledby="team-workspace-title">
+          <div class="workspace-toolbar">
+            <div>
+              <h2 id="team-workspace-title">팀 편성</h2>
+              <p id="workspace-status">왼쪽에서 오늘 참가자 10명을 선택하세요.</p>
+            </div>
+            <div class="toolbar-actions">
+              <button class="ghost-button" id="clear-selection">비우기</button>
+              <button class="primary-button" id="balance-teams" disabled>자동 균형 편성</button>
+            </div>
+          </div>
+
+          <div class="selected-stage" id="selected-stage">
+            <div class="empty-state">
+              <div class="empty-lines" aria-hidden="true"><i></i><i></i><i></i><i></i><i></i></div>
+              <strong>아직 선택한 참가자가 없습니다.</strong>
+              <p>최근 10명을 불러오거나 참가자 풀에서 직접 선택할 수 있습니다.</p>
+            </div>
+          </div>
+
+          <div class="team-board" id="team-board" hidden>
+            <article class="team-column blue-team" data-team="blue">
+              <header>
+                <div><span class="team-dot"></span><h3>블루 팀</h3></div>
+                <strong id="blue-power">-</strong>
+              </header>
+              <div class="lineup-list" id="blue-lineup"></div>
+            </article>
+            <div class="swap-rail" id="swap-rail" aria-label="라인별 선수 교체"></div>
+            <article class="team-column red-team" data-team="red">
+              <header>
+                <div><span class="team-dot"></span><h3>레드 팀</h3></div>
+                <strong id="red-power">-</strong>
+              </header>
+              <div class="lineup-list" id="red-lineup"></div>
+            </article>
+          </div>
+        </section>
+
+        <aside class="insight-panel" aria-labelledby="insight-title">
+          <div class="section-heading">
+            <div>
+              <h2 id="insight-title">밴픽 준비</h2>
+              <p>편성 후 자동 계산</p>
+            </div>
+          </div>
+          <div id="insight-content" class="insight-content">
+            <div class="empty-insight">
+              <strong>팀 편성이 필요합니다.</strong>
+              <p>두 팀이 완성되면 전력 차이, 라인 이탈, 상대 반복 픽을 한곳에서 확인할 수 있습니다.</p>
+            </div>
+          </div>
+        </aside>
+      </div>
+    </section>
+
+    <section class="app-view" id="view-players" aria-labelledby="players-title">
+      <header class="page-heading">
+        <div>
+          <h1 id="players-title">참가자 기록</h1>
+          <p>승률만 보지 않고 주라인, 내전 표본, 반복 사용 챔피언과 장기 숙련 기록을 함께 확인합니다.</p>
+        </div>
+        <div class="view-tools">
+          <label class="search-field wide-search">
+            <span class="sr-only">참가자 전체 검색</span>
+            <input id="player-search" type="search" placeholder="참가자 또는 챔피언 검색">
+          </label>
+        </div>
+      </header>
+      <div class="player-directory" id="player-directory"></div>
+    </section>
+
+    <section class="app-view" id="view-games" aria-labelledby="games-title">
+      <header class="page-heading">
+        <div>
+          <h1 id="games-title">검수 경기 기록</h1>
+          <p>18경기 결과를 최신순으로 확인합니다. 20분 미만 경기는 숙련 판단에서 별도 주의가 표시됩니다.</p>
+        </div>
+      </header>
+      <div class="game-list" id="game-list"></div>
+    </section>
+  </main>
+
+  <dialog class="player-dialog" id="player-dialog">
+    <div class="dialog-shell">
+      <button class="dialog-close" id="dialog-close" aria-label="상세 정보 닫기">닫기</button>
+      <div id="player-detail"></div>
+    </div>
+  </dialog>
+
+  <dialog class="unlock-dialog" id="unlock-dialog">
+    <form class="unlock-shell" id="unlock-form">
+      <span class="unlock-kicker">PRIVATE ACCESS</span>
+      <h2>내전 데스크 잠금 해제</h2>
+      <p>비공개 내전 기록을 보려면 공유받은 비밀번호를 입력하세요.</p>
+      <label class="unlock-field">
+        <span>비밀번호</span>
+        <input id="unlock-password" type="password" autocomplete="current-password" required>
+      </label>
+      <p class="unlock-error" id="unlock-error" role="alert"></p>
+      <button class="primary-button" type="submit">내전 데스크 열기</button>
+      <small>복호화는 이 브라우저 안에서만 처리됩니다.</small>
+    </form>
+  </dialog>
+
+  <div class="toast" id="toast" role="status" aria-live="polite"></div>
+  <script src="https://unpkg.com/lucide@0.468.0/dist/umd/lucide.min.js"></script>
+  <script type="module" src="app.js?v=20260818-6"></script>
+</body>
+</html>
