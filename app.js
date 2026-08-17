@@ -47,13 +47,17 @@ function showToast(message) {
 }
 
 function tierScore(player) {
-  const tier = `${player.currentTier} ${player.peakTier}`;
+  const tier = `${player.adjustedTier || player.currentTier} ${player.peakTier}`;
   const key = Object.keys(TIER_SCORE).find((name) => tier.includes(name));
   const base = key ? TIER_SCORE[key] : 45;
   const gamesWeight = Math.min(1, player.games / 10);
   const contextualWin = 50 + ((player.winRate * 100) - 50) * gamesWeight * .45;
   const kdaValue = Math.min(5, player.kda) * 2.6;
   return Math.round(base * .66 + contextualWin * .22 + kdaValue * .12);
+}
+
+function displayTier(player) {
+  return player.adjustedTier ? `${player.adjustedTier} (보정)` : player.currentTier;
 }
 
 function roleFit(player, role) {
@@ -222,7 +226,7 @@ function renderRoster() {
     return `<button class="roster-row ${selected ? "is-selected" : ""} ${disabled ? "is-disabled" : ""}" data-player-select="${player.id}" ${disabled ? "disabled" : ""}>
       <span class="roster-name">
         <span class="role-glyph" data-role="${player.primaryRole}">${ROLE_SHORT[player.primaryRole] || "ALL"}</span>
-        <span class="roster-copy"><strong>${escapeHtml(displayPlayerName(player))}</strong><small>${escapeHtml(player.currentTier)} · ${player.games}경기</small></span>
+        <span class="roster-copy"><strong>${escapeHtml(displayPlayerName(player))}</strong><small>${escapeHtml(displayTier(player))} · ${player.games}경기</small></span>
       </span>
       <span class="selection-box">✓</span>
     </button>`;
@@ -248,7 +252,7 @@ function renderSelectedStage() {
   }
   $("#selected-stage").innerHTML = `<div class="selection-summary"><p>선수 정보는 참가자 이름을 눌러 자세히 볼 수 있습니다.</p><div class="selected-grid">${state.selected.map((id, index) => {
     const player = playerById(id);
-    return `<div class="selected-strip"><span class="strip-index">${String(index + 1).padStart(2, "0")}</span><span class="roster-copy" data-player-detail="${player.id}" role="button" tabindex="0"><strong>${escapeHtml(displayPlayerName(player))}</strong><small>${escapeHtml(player.primaryRole)} · ${escapeHtml(player.currentTier)}</small></span><button data-remove-player="${player.id}" aria-label="${escapeHtml(displayPlayerName(player))} 선택 해제">제거</button></div>`;
+    return `<div class="selected-strip"><span class="strip-index">${String(index + 1).padStart(2, "0")}</span><span class="roster-copy" data-player-detail="${player.id}" role="button" tabindex="0"><strong>${escapeHtml(displayPlayerName(player))}</strong><small>${escapeHtml(player.primaryRole)} · ${escapeHtml(displayTier(player))}</small></span><button data-remove-player="${player.id}" aria-label="${escapeHtml(displayPlayerName(player))} 선택 해제">제거</button></div>`;
   }).join("")}</div></div>`;
 }
 
@@ -331,7 +335,7 @@ function renderLineup(team) {
       <span class="slot-role">${role}</span>
       <div class="slot-player" data-player-detail="${player.id}" role="button" tabindex="0">
         <strong>${escapeHtml(displayPlayerName(player))}</strong>
-        <small class="${offRole ? "offrole-note" : ""}">${offRole ? "라인 이탈 · " : ""}${escapeHtml(player.currentTier)} · ${player.games}경기</small>
+        <small class="${offRole ? "offrole-note" : ""}">${offRole ? "라인 이탈 · " : ""}${escapeHtml(displayTier(player))} · ${player.games}경기</small>
         <div class="slot-champs">${champs.map((champion) => championPortrait(champion)).join("")}</div>
       </div>
     </div>`;
@@ -742,7 +746,7 @@ function renderPlayerDirectory() {
   const players = state.data.players.filter((player) => !query || searchableText(player).includes(query));
   $("#player-directory").innerHTML = players.map((player) => {
     const champs = player.championRecords.slice(0, 4).map((item) => item.champion);
-    return `<button class="player-card" data-player-detail="${player.id}"><header><div><h3>${escapeHtml(displayPlayerName(player))}</h3><p>${escapeHtml(player.currentTier)} · 최고 ${escapeHtml(player.peakTier)}</p></div><span class="role-tag">${escapeHtml(player.primaryRole)}</span></header><div class="player-card-stats"><div><span>내전</span><strong>${player.games}경기</strong></div><div><span>승률</span><strong>${percent(player.winRate)}</strong></div><div><span>KDA</span><strong>${compact(player.kda)}</strong></div></div><div class="champion-line"><div class="slot-champs">${champs.map((champion) => championPortrait(champion)).join("")}</div><span>${escapeHtml(player.headlineChampions)}</span></div></button>`;
+    return `<button class="player-card" data-player-detail="${player.id}"><header><div><h3>${escapeHtml(displayPlayerName(player))}</h3><p>${escapeHtml(displayTier(player))} · 최고 ${escapeHtml(player.peakTier)}</p></div><span class="role-tag">${escapeHtml(player.primaryRole)}</span></header><div class="player-card-stats"><div><span>내전</span><strong>${player.games}경기</strong></div><div><span>승률</span><strong>${percent(player.winRate)}</strong></div><div><span>KDA</span><strong>${compact(player.kda)}</strong></div></div><div class="champion-line"><div class="slot-champs">${champs.map((champion) => championPortrait(champion)).join("")}</div><span>${escapeHtml(player.headlineChampions)}</span></div></button>`;
   }).join("");
 }
 
@@ -772,7 +776,11 @@ function openPlayerDetail(id) {
   const player = playerById(id);
   if (!player) return;
   const secondary = secondaryRoleLabel(player);
-  $("#player-detail").innerHTML = `<div class="detail-head"><h2>${escapeHtml(displayPlayerName(player))}</h2><p>${escapeHtml(player.riotId)} · 주라인 ${escapeHtml(player.primaryRole)}${secondary !== "없음" ? ` · 가능 ${escapeHtml(secondary)}` : ""}</p></div><div class="detail-facts"><div><span>현재 / 최고 티어</span><strong>${escapeHtml(player.currentTier)} / ${escapeHtml(player.peakTier)}</strong></div><div><span>내전 표본</span><strong>${player.games}경기 ${player.wins}승 ${player.losses}패</strong></div><div><span>승률</span><strong>${percent(player.winRate)}</strong></div><div><span>KDA</span><strong>${compact(player.kda)}</strong></div></div><section class="detail-section"><h3>내전 챔피언 기록</h3><table class="record-table"><thead><tr><th>챔피언</th><th>라인</th><th>경기</th><th>승률</th><th>KDA</th><th>표본</th></tr></thead><tbody>${player.championRecords.slice(0, 12).map((record) => `<tr><td><strong>${escapeHtml(record.champion)}</strong></td><td>${record.role}</td><td>${record.games}</td><td>${percent(record.winRate)}</td><td>${compact(record.kda)}</td><td>${escapeHtml(record.sample)}</td></tr>`).join("")}</tbody></table></section><section class="detail-section"><h3>전적 기반 챔프폭</h3><div class="pool-list">${player.pool.slice(0, 14).map((item) => `<div class="pool-row">${championPortrait(item.champion, 34)}<span><strong>${escapeHtml(item.champion)}</strong><small>${escapeHtml(item.role)} · 숙련 ${Math.round(item.masteryScore)}</small></span><span class="grade" data-grade="${escapeHtml(item.grade)}">${escapeHtml(item.grade)}</span></div>`).join("") || `<p>연결된 장기 전적 데이터가 없습니다.</p>`}</div></section>`;
+  const tierLabel = player.adjustedTier
+    ? `${player.currentTier} / ${player.peakTier} · 보정 ${player.adjustedTier}`
+    : `${player.currentTier} / ${player.peakTier}`;
+  const soloPool = (player.soloPool || []).map((item) => `<div class="pool-row">${championPortrait(item.champion, 34)}<span><strong>${escapeHtml(item.champion)}</strong><small>${escapeHtml(item.role)} · ${item.games}판 · 승률 ${percent(item.winRate)}</small></span></div>`).join("");
+  $("#player-detail").innerHTML = `<div class="detail-head"><h2>${escapeHtml(displayPlayerName(player))}</h2><p>${escapeHtml(player.riotId)} · 주라인 ${escapeHtml(player.primaryRole)}${secondary !== "없음" ? ` · 가능 ${escapeHtml(secondary)}` : ""}</p></div><div class="detail-facts"><div><span>현재 / 최고 티어</span><strong>${escapeHtml(tierLabel)}</strong></div><div><span>내전 표본</span><strong>${player.games}경기 ${player.wins}승 ${player.losses}패</strong></div><div><span>승률</span><strong>${percent(player.winRate)}</strong></div><div><span>KDA</span><strong>${compact(player.kda)}</strong></div></div><section class="detail-section"><h3>내전 챔피언 기록</h3><table class="record-table"><thead><tr><th>챔피언</th><th>라인</th><th>경기</th><th>승률</th><th>KDA</th><th>표본</th></tr></thead><tbody>${player.championRecords.slice(0, 12).map((record) => `<tr><td><strong>${escapeHtml(record.champion)}</strong></td><td>${record.role}</td><td>${record.games}</td><td>${percent(record.winRate)}</td><td>${compact(record.kda)}</td><td>${escapeHtml(record.sample)}</td></tr>`).join("")}</tbody></table></section><section class="detail-section"><h3>솔랭 챔프폭 <small>20판 이상</small></h3><div class="pool-list">${soloPool || `<p>20판 이상 확인된 솔랭 챔피언이 없습니다.</p>`}</div></section><section class="detail-section"><h3>전적 기반 숙련도</h3><div class="pool-list">${player.pool.slice(0, 14).map((item) => `<div class="pool-row">${championPortrait(item.champion, 34)}<span><strong>${escapeHtml(item.champion)}</strong><small>${escapeHtml(item.role)} · 숙련 ${Math.round(item.masteryScore)}</small></span><span class="grade" data-grade="${escapeHtml(item.grade)}">${escapeHtml(item.grade)}</span></div>`).join("") || `<p>연결된 장기 전적 데이터가 없습니다.</p>`}</div></section>`;
   $("#player-dialog").showModal();
 }
 
