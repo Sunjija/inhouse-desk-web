@@ -4,6 +4,13 @@ const TIER_SCORE = {
   "챌린저": 100, "그랜드마스터": 94, "마스터": 88, "다이아몬드": 78,
   "에메랄드": 68, "플래티넘": 58, "골드": 48, "실버": 38, "브론즈": 28, "아이언": 18,
 };
+const GRADE_SCORE = { "장인": 10, "잘함": 7, "보통": 4, "가능": 1 };
+const DRAFT_STEPS = [
+  ["blue", "ban"], ["red", "ban"], ["blue", "ban"], ["red", "ban"], ["blue", "ban"], ["red", "ban"],
+  ["blue", "pick"], ["red", "pick"], ["red", "pick"], ["blue", "pick"], ["blue", "pick"], ["red", "pick"],
+  ["red", "ban"], ["blue", "ban"], ["red", "ban"], ["blue", "ban"],
+  ["red", "pick"], ["blue", "pick"], ["blue", "pick"], ["red", "pick"],
+].map(([side, type], index) => ({ side, type, index }));
 
 const state = {
   data: null,
@@ -14,7 +21,10 @@ const state = {
   teams: null,
   mySide: "blue",
   championImages: new Map(),
+  championNames: [],
   encryptedPayload: null,
+  draftActions: [],
+  draftCandidates: [],
 };
 
 const $ = (selector, root = document) => root.querySelector(selector);
@@ -46,12 +56,30 @@ function tierScore(player) {
 }
 
 function roleFit(player, role) {
+  if (player.roleLock && role !== player.roleLock) return 0;
   let score = 8;
   if (player.primaryRole === role) score += 92;
   if (player.secondaryRole?.includes(role)) score += 64;
   const roleRecord = player.roles.find((item) => item.role === role);
-  if (roleRecord) score += Math.min(32, roleRecord.games * 6);
+  if (roleRecord) {
+    const declared = player.primaryRole === role || player.secondaryRole?.includes(role);
+    score += declared ? Math.min(32, roleRecord.games * 6) : 52 + Math.min(20, roleRecord.games * 4);
+  }
   return score;
+}
+
+function eligibleRoles(player) {
+  if (player.roleLock) return [player.roleLock];
+  const roles = new Set([player.primaryRole]);
+  ROLES.forEach((role) => {
+    if (player.secondaryRole?.includes(role) || player.roles.some((item) => item.role === role && item.games > 0)) roles.add(role);
+  });
+  return [...roles];
+}
+
+function secondaryRoleLabel(player) {
+  const secondary = eligibleRoles(player).filter((role) => role !== player.primaryRole);
+  return secondary.length ? secondary.join(" · ") : "없음";
 }
 
 function isOffRole(player, role) {
@@ -89,8 +117,31 @@ async function decryptData(payload, password) {
   return JSON.parse(new TextDecoder().decode(plain));
 }
 
+function calibratePoolGrades(player) {
+  const totalEffectiveGames = player.pool.reduce((sum, item) => sum + Number(item.effectiveGames || 0), 0);
+  const artisanRank = ["챌린저", "그랜드마스터", "마스터", "다이아몬드", "에메랄드"]
+    .some((tier) => `${player.currentTier} ${player.peakTier}`.includes(tier));
+  player.pool.forEach((item) => {
+    const mastery = Number(item.masteryScore || 0);
+    const effectiveGames = Number(item.effectiveGames || 0);
+    const internalGames = Number(item.internalGames || 0);
+    const poolShare = totalEffectiveGames ? effectiveGames / totalEffectiveGames : 0;
+
+    if (artisanRank && effectiveGames >= 25 && mastery >= 74 && (poolShare >= .58 || (mastery >= 92 && internalGames >= 2))) {
+      item.grade = "장인";
+    } else if ((mastery >= 80 && effectiveGames >= 18) || (mastery >= 72 && effectiveGames >= 35)) {
+      item.grade = "잘함";
+    } else if ((mastery >= 56 && effectiveGames >= 8) || (internalGames >= 2 && mastery >= 48)) {
+      item.grade = "보통";
+    } else {
+      item.grade = "가능";
+    }
+  });
+}
+
 function applyLoadedData(data) {
   if (!data?.meta || !Array.isArray(data.players) || !Array.isArray(data.games)) throw new Error("올바른 내전 데이터가 아닙니다.");
+  data.players.forEach(calibratePoolGrades);
   state.data = data;
   state.selected = state.selected.filter((id) => state.data.players.some((player) => player.id === id)).slice(0, 10);
   $("#data-date").textContent = state.data.meta.dataDate;
@@ -115,6 +166,7 @@ async function loadChampionImages() {
   try {
     const realm = await fetch("https://ddragon.leagueoflegends.com/realms/kr.json").then((response) => response.json());
     const catalog = await fetch(`https://ddragon.leagueoflegends.com/cdn/${realm.v}/data/ko_KR/champion.json`).then((response) => response.json());
+    state.championNames = Object.values(catalog.data).map((champion) => champion.name).sort((a, b) => a.localeCompare(b, "ko"));
     Object.values(catalog.data).forEach((champion) => {
       state.championImages.set(champion.name, `https://ddragon.leagueoflegends.com/cdn/${realm.v}/img/champion/${champion.image.full}`);
     });
@@ -126,7 +178,7 @@ async function loadChampionImages() {
 
 function renderRoleFilters() {
   $("#role-filters").innerHTML = ["전체", ...ROLES].map((role) => `
-    <button class="role-filter ${state.roleFilter === role ? "is-active" : ""}" data-role-filter="${role}">${role}</button>
+    <button class="role-filter ${state.roleFilter === role ? "is-active" : ""}" data-role-filter="${role}" aria-pressed="${state.roleFilter === role}">${role}</button>
   `).join("");
 }
 
@@ -137,7 +189,7 @@ function searchableText(player) {
 function renderRoster() {
   const query = state.rosterQuery.trim().toLowerCase();
   const visible = state.data.players.filter((player) => {
-    const roleMatch = state.roleFilter === "전체" || player.primaryRole === state.roleFilter || player.secondaryRole?.includes(state.roleFilter);
+    const roleMatch = state.roleFilter === "전체" || eligibleRoles(player).includes(state.roleFilter);
     return roleMatch && (!query || searchableText(player).includes(query));
   });
   $("#selected-count").textContent = state.selected.length;
@@ -177,15 +229,40 @@ function renderSelectedStage() {
   }).join("")}</div></div>`;
 }
 
+function bestRoleAssignment(players) {
+  const slots = ROLES.flatMap((role) => [role, role]).sort((a, b) => {
+    const aOptions = players.filter((player) => roleFit(player, a) >= 55).length;
+    const bOptions = players.filter((player) => roleFit(player, b) >= 55).length;
+    return aOptions - bOptions;
+  });
+  const memo = new Map();
+  function solve(index, mask) {
+    if (index === slots.length) return { score: 0, assignments: [] };
+    const key = `${index}:${mask}`;
+    if (memo.has(key)) return memo.get(key);
+    const role = slots[index];
+    let best = null;
+    players.forEach((player, playerIndex) => {
+      if (mask & (1 << playerIndex)) return;
+      const fit = roleFit(player, role);
+      if (fit <= 0) return;
+      const next = solve(index + 1, mask | (1 << playerIndex));
+      if (!next) return;
+      const candidate = { score: fit + next.score, assignments: [{ role, player }, ...next.assignments] };
+      if (!best || candidate.score > best.score) best = candidate;
+    });
+    memo.set(key, best);
+    return best;
+  }
+  return solve(0, 0);
+}
+
 function createBalancedTeams() {
   if (state.selected.length !== 10) return;
-  const remaining = state.selected.map(playerById);
-  const rolePairs = {};
-  const roleScarcity = ROLES.map((role) => ({ role, available: remaining.filter((player) => roleFit(player, role) >= 55).length })).sort((a, b) => a.available - b.available);
-  for (const { role } of roleScarcity) {
-    const candidates = remaining.sort((a, b) => roleFit(b, role) - roleFit(a, role));
-    rolePairs[role] = candidates.splice(0, 2);
-  }
+  const assignment = bestRoleAssignment(state.selected.map(playerById));
+  if (!assignment) return showToast("현재 참가자 조합으로 라인을 편성할 수 없습니다.");
+  const rolePairs = Object.fromEntries(ROLES.map((role) => [role, []]));
+  assignment.assignments.forEach(({ role, player }) => rolePairs[role].push(player));
 
   let best = null;
   for (let mask = 0; mask < 32; mask += 1) {
@@ -203,6 +280,7 @@ function createBalancedTeams() {
     if (!best || cost < best.cost) best = { blue, red, cost };
   }
   state.teams = { blue: best.blue, red: best.red };
+  state.draftActions = [];
   renderEverything();
   showToast("주라인과 전력 차이를 함께 계산해 편성했습니다.");
 }
@@ -300,7 +378,236 @@ function renderInsights() {
       <div class="draft-side-toggle"><button class="side-button ${state.mySide === "blue" ? "is-active" : ""}" data-side="blue">내 팀 블루</button><button class="side-button ${state.mySide === "red" ? "is-active" : ""}" data-side="red">내 팀 레드</button></div>
     </div>
     <div class="focus-block"><h3>상대 견제 우선순위</h3><p>반복 사용·숙련 기록·배치 라인을 합산한 참고값입니다.</p><div class="focus-list">${renderFocusRows(bans)}</div></div>
-    <div class="focus-block"><h3>우리 팀 중심축</h3><p>실제 내전 반복 사용을 먼저 보고 장기 숙련으로 보완합니다.</p><div class="focus-list">${renderFocusRows(comforts)}</div></div>`;
+    <div class="focus-block"><h3>우리 팀 중심축</h3><p>실제 내전 반복 사용을 먼저 보고 장기 숙련으로 보완합니다.</p><div class="focus-list">${renderFocusRows(comforts)}</div></div>
+    <button class="primary-button open-draft-button" data-open-draft><i data-lucide="swords" aria-hidden="true"></i>밴픽 도우미 열기</button>`;
+}
+
+const clamp = (value, min, max) => Math.max(min, Math.min(max, value));
+
+function roleMatches(value, role) {
+  return String(value || "").split(/[·,/\s]+/).includes(role);
+}
+
+function draftCurrentStep() {
+  return DRAFT_STEPS[state.draftActions.length] || null;
+}
+
+function draftActions(side, type) {
+  return state.draftActions.filter((action) => action.side === side && action.type === type);
+}
+
+function draftPickedRoles(side) {
+  return new Set(draftActions(side, "pick").map((action) => action.role));
+}
+
+function draftAvailableRoles(side) {
+  const filled = draftPickedRoles(side);
+  return ROLES.filter((role) => !filled.has(role));
+}
+
+function knownChampionNames() {
+  if (state.championNames.length) return state.championNames;
+  return [...new Set(state.data.players.flatMap((player) => [
+    ...player.pool.map((item) => item.champion),
+    ...player.championRecords.map((item) => item.champion),
+  ]))].sort((a, b) => a.localeCompare(b, "ko"));
+}
+
+function roleCandidateEntries(player, role, mode) {
+  const merged = new Map();
+  player.pool.forEach((item, rank) => {
+    if (!roleMatches(item.role, role)) return;
+    merged.set(item.champion, { champion: item.champion, pool: item, rank });
+  });
+  player.championRecords.forEach((record) => {
+    if (record.role !== role) return;
+    const current = merged.get(record.champion) || { champion: record.champion, pool: null, rank: 18 };
+    current.record = record;
+    merged.set(record.champion, current);
+  });
+
+  return [...merged.values()].map((entry) => {
+    const records = player.championRecords.filter((record) => record.champion === entry.champion && record.role === role);
+    const internalGames = records.reduce((sum, record) => sum + record.games, 0);
+    const internalWins = records.reduce((sum, record) => sum + record.wins, 0);
+    const mastery = Number(entry.pool?.masteryScore || (internalGames ? 54 : 36));
+    const adjustedWinRate = (internalWins + 1.5) / (internalGames + 3);
+    const confidence = 1 - Math.exp(-internalGames / 2.25);
+    const declared = player.primaryRole === role ? 8 : player.secondaryRole?.includes(role) ? 5 : 2;
+    const grade = GRADE_SCORE[entry.pool?.grade] || 0;
+    const rankValue = Math.max(0, 7 - entry.rank * .55);
+    const targetValue = mode === "ban" ? Math.min(8, internalGames * 1.7) : 0;
+    const score = clamp(Math.round(
+      40 + mastery * .30 + confidence * 17 + (adjustedWinRate - .5) * 20 + declared + grade + rankValue + targetValue
+    ), 42, 96);
+    return {
+      champion: entry.champion,
+      player,
+      role,
+      score,
+      internalGames,
+      adjustedWinRate,
+      mastery,
+      grade: entry.pool?.grade || (internalGames ? "내전 기록" : "가능"),
+    };
+  });
+}
+
+function draftRecommendations(limit = 7) {
+  const step = draftCurrentStep();
+  if (!step || !state.teams) return [];
+  const sourceSide = step.type === "ban" ? (step.side === "blue" ? "red" : "blue") : step.side;
+  const roles = draftAvailableRoles(sourceSide);
+  const used = new Set(state.draftActions.map((action) => action.champion));
+  const candidates = roles.flatMap((role) => roleCandidateEntries(state.teams[sourceSide][role], role, step.type))
+    .filter((item) => !used.has(item.champion));
+  const unique = new Map();
+  candidates.sort((a, b) => b.score - a.score).forEach((item) => {
+    if (!unique.has(item.champion)) unique.set(item.champion, item);
+  });
+
+  if (unique.size < limit) {
+    const fallback = roles.flatMap((role) => {
+      const player = state.teams[sourceSide][role];
+      const pool = new Map();
+      state.data.players.forEach((source) => {
+        source.pool.forEach((item) => {
+          if (!roleMatches(item.role, role)) return;
+          const current = pool.get(item.champion) || { mastery: 0, frequency: 0 };
+          current.mastery = Math.max(current.mastery, Number(item.masteryScore || 0));
+          current.frequency += 1;
+          pool.set(item.champion, current);
+        });
+        source.championRecords.forEach((record) => {
+          if (record.role !== role) return;
+          const current = pool.get(record.champion) || { mastery: 42, frequency: 0 };
+          current.frequency += Math.min(3, record.games);
+          pool.set(record.champion, current);
+        });
+      });
+      return [...pool].map(([champion, evidence]) => ({
+        champion,
+        player,
+        role,
+        score: clamp(Math.round(42 + evidence.mastery * .12 + Math.min(7, evidence.frequency)), 42, 61),
+        internalGames: 0,
+        adjustedWinRate: .5,
+        mastery: evidence.mastery,
+        grade: "공용 후보",
+        fallback: true,
+      }));
+    }).filter((item) => !used.has(item.champion) && !unique.has(item.champion));
+    fallback.sort((a, b) => b.score - a.score).forEach((item) => {
+      if (unique.size < limit && !unique.has(item.champion)) unique.set(item.champion, item);
+    });
+  }
+  return [...unique.values()].slice(0, limit);
+}
+
+function draftEvidence(item) {
+  if (item.fallback) return "챔프폭 근거 부족 · 라인 공용 후보";
+  if (item.internalGames) return `내전 ${item.internalGames}경기 · 보정 승률 ${Math.round(item.adjustedWinRate * 100)}%`;
+  return `${item.grade} · 장기 숙련 ${Math.round(item.mastery)}`;
+}
+
+function renderDraftBans(side) {
+  const actions = draftActions(side, "ban");
+  return Array.from({ length: 5 }, (_, index) => {
+    const action = actions[index];
+    return action
+      ? `<div class="draft-ban-slot is-filled" title="${escapeHtml(action.champion)}">${championPortrait(action.champion, 38)}</div>`
+      : `<div class="draft-ban-slot"><span>B${index + 1}</span></div>`;
+  }).join("");
+}
+
+function renderDraftPicks(side) {
+  const actions = draftActions(side, "pick");
+  return Array.from({ length: 5 }, (_, index) => {
+    const action = actions[index];
+    if (!action) return `<div class="draft-pick-slot is-empty"><span>PICK ${index + 1}</span></div>`;
+    const player = playerById(action.playerId);
+    return `<div class="draft-pick-slot">${championPortrait(action.champion, 42)}<span><strong>${escapeHtml(action.champion)}</strong><small>${escapeHtml(action.role)} · ${escapeHtml(player?.name.split(" (")[0] || "직접 배정")}</small></span></div>`;
+  }).join("");
+}
+
+function renderDraftCandidateOptions() {
+  const options = $("#draft-champion-options");
+  if (options) options.innerHTML = knownChampionNames().map((name) => `<option value="${escapeHtml(name)}"></option>`).join("");
+}
+
+function renderDraft() {
+  if (!state.teams) return;
+  const step = draftCurrentStep();
+  const complete = !step;
+  const blueIsMine = state.mySide === "blue";
+  $("#draft-blue-label").textContent = blueIsMine ? "우리 팀" : "상대 팀";
+  $("#draft-red-label").textContent = blueIsMine ? "상대 팀" : "우리 팀";
+  $("#draft-blue-bans").innerHTML = renderDraftBans("blue");
+  $("#draft-red-bans").innerHTML = renderDraftBans("red");
+  $("#draft-blue-picks").innerHTML = renderDraftPicks("blue");
+  $("#draft-red-picks").innerHTML = renderDraftPicks("red");
+  $("#draft-progress").textContent = `${state.draftActions.length}/20`;
+  $("#draft-undo").disabled = !state.draftActions.length;
+  $("#draft-reset").disabled = !state.draftActions.length;
+  renderDraftCandidateOptions();
+
+  if (complete) {
+    $("#draft-turn-banner").innerHTML = `<strong>밴픽 완료</strong><span>두 팀의 최종 조합을 확인하세요.</span>`;
+    $("#draft-recommend-copy").textContent = "20턴이 모두 완료됐습니다.";
+    $("#draft-candidate-list").innerHTML = `<div class="empty-insight compact-empty"><strong>밴픽이 완료됐습니다.</strong><p>되돌리거나 초기화해 다시 계산할 수 있습니다.</p></div>`;
+    $("#draft-role-wrap").hidden = true;
+    $("#draft-manual-apply").disabled = true;
+    return;
+  }
+
+  const sideName = step.side === "blue" ? "블루" : "레드";
+  const actionName = step.type === "ban" ? "밴" : "픽";
+  const ownerName = step.side === state.mySide ? "우리 팀" : "상대 팀";
+  $("#draft-turn-banner").innerHTML = `<strong class="turn-${step.side}">${state.draftActions.length + 1}번째 · ${sideName} ${actionName}</strong><span>${ownerName} 차례입니다.</span>`;
+  $("#draft-recommend-copy").textContent = step.type === "ban"
+    ? "상대의 아직 열려 있는 라인에서 견제 가치가 높은 순서입니다."
+    : "아직 채우지 않은 라인에서 숙련 근거가 강한 순서입니다.";
+
+  state.draftCandidates = draftRecommendations(7);
+  $("#draft-candidate-list").innerHTML = state.draftCandidates.length ? state.draftCandidates.map((item, index) => `
+    <button class="draft-candidate" data-draft-candidate="${index}">
+      ${championPortrait(item.champion, 42)}
+      <span class="draft-candidate-copy"><strong>${escapeHtml(item.champion)}</strong><small>${escapeHtml(item.role)} · ${escapeHtml(item.player.name.split(" (")[0])}</small><em>${escapeHtml(draftEvidence(item))}</em></span>
+      <span class="draft-candidate-score"><b>${item.score}</b><small>${actionName}</small></span>
+    </button>
+  `).join("") : `<div class="empty-insight compact-empty"><strong>추천 가능한 챔피언이 없습니다.</strong><p>아래 직접 적용을 사용하세요.</p></div>`;
+
+  const roleWrap = $("#draft-role-wrap");
+  roleWrap.hidden = step.type !== "pick";
+  $("#draft-role-select").innerHTML = draftAvailableRoles(step.side).map((role) => `<option value="${role}">${role}</option>`).join("");
+  $("#draft-manual-apply").disabled = false;
+}
+
+function applyDraftAction(champion, role = "", candidate = null) {
+  const step = draftCurrentStep();
+  if (!step || !state.teams) return;
+  const normalized = String(champion || "").trim();
+  if (!normalized) return showToast("챔피언 이름을 입력하세요.");
+  if (state.draftActions.some((action) => action.champion === normalized)) return showToast("이미 밴 또는 픽된 챔피언입니다.");
+  let assignedRole = role;
+  let playerId = "";
+  if (step.type === "pick") {
+    const available = draftAvailableRoles(step.side);
+    assignedRole = available.includes(assignedRole) ? assignedRole : candidate?.role;
+    if (!available.includes(assignedRole)) assignedRole = available[0];
+    playerId = state.teams[step.side][assignedRole]?.id || "";
+  }
+  state.draftActions.push({
+    side: step.side,
+    type: step.type,
+    champion: normalized,
+    role: assignedRole || candidate?.role || "",
+    playerId,
+    score: candidate?.score || null,
+  });
+  $("#draft-champion-search").value = "";
+  renderDraft();
+  window.lucide?.createIcons();
 }
 
 function renderPlayerDirectory() {
@@ -334,7 +641,8 @@ function renderGames() {
 function openPlayerDetail(id) {
   const player = playerById(id);
   if (!player) return;
-  $("#player-detail").innerHTML = `<div class="detail-head"><h2>${escapeHtml(player.name)}</h2><p>${escapeHtml(player.riotId)} · ${escapeHtml(player.primaryRole)}${player.secondaryRole !== "없음" ? ` / ${escapeHtml(player.secondaryRole)}` : ""}</p></div><div class="detail-facts"><div><span>현재 / 최고 티어</span><strong>${escapeHtml(player.currentTier)} / ${escapeHtml(player.peakTier)}</strong></div><div><span>내전 표본</span><strong>${player.games}경기 ${player.wins}승 ${player.losses}패</strong></div><div><span>승률</span><strong>${percent(player.winRate)}</strong></div><div><span>KDA</span><strong>${compact(player.kda)}</strong></div></div><section class="detail-section"><h3>내전 챔피언 기록</h3><table class="record-table"><thead><tr><th>챔피언</th><th>라인</th><th>경기</th><th>승률</th><th>KDA</th><th>표본</th></tr></thead><tbody>${player.championRecords.slice(0, 12).map((record) => `<tr><td><strong>${escapeHtml(record.champion)}</strong></td><td>${record.role}</td><td>${record.games}</td><td>${percent(record.winRate)}</td><td>${compact(record.kda)}</td><td>${escapeHtml(record.sample)}</td></tr>`).join("")}</tbody></table></section><section class="detail-section"><h3>전적 기반 챔프폭</h3><div class="pool-list">${player.pool.slice(0, 14).map((item) => `<div class="pool-row">${championPortrait(item.champion, 34)}<span><strong>${escapeHtml(item.champion)}</strong><small>${escapeHtml(item.role)} · 숙련 ${Math.round(item.masteryScore)}</small></span><span class="grade" data-grade="${escapeHtml(item.grade)}">${escapeHtml(item.grade)}</span></div>`).join("") || `<p>연결된 장기 전적 데이터가 없습니다.</p>`}</div></section>`;
+  const secondary = secondaryRoleLabel(player);
+  $("#player-detail").innerHTML = `<div class="detail-head"><h2>${escapeHtml(player.name)}</h2><p>${escapeHtml(player.riotId)} · 주라인 ${escapeHtml(player.primaryRole)}${secondary !== "없음" ? ` · 가능 ${escapeHtml(secondary)}` : ""}</p></div><div class="detail-facts"><div><span>현재 / 최고 티어</span><strong>${escapeHtml(player.currentTier)} / ${escapeHtml(player.peakTier)}</strong></div><div><span>내전 표본</span><strong>${player.games}경기 ${player.wins}승 ${player.losses}패</strong></div><div><span>승률</span><strong>${percent(player.winRate)}</strong></div><div><span>KDA</span><strong>${compact(player.kda)}</strong></div></div><section class="detail-section"><h3>내전 챔피언 기록</h3><table class="record-table"><thead><tr><th>챔피언</th><th>라인</th><th>경기</th><th>승률</th><th>KDA</th><th>표본</th></tr></thead><tbody>${player.championRecords.slice(0, 12).map((record) => `<tr><td><strong>${escapeHtml(record.champion)}</strong></td><td>${record.role}</td><td>${record.games}</td><td>${percent(record.winRate)}</td><td>${compact(record.kda)}</td><td>${escapeHtml(record.sample)}</td></tr>`).join("")}</tbody></table></section><section class="detail-section"><h3>전적 기반 챔프폭</h3><div class="pool-list">${player.pool.slice(0, 14).map((item) => `<div class="pool-row">${championPortrait(item.champion, 34)}<span><strong>${escapeHtml(item.champion)}</strong><small>${escapeHtml(item.role)} · 숙련 ${Math.round(item.masteryScore)}</small></span><span class="grade" data-grade="${escapeHtml(item.grade)}">${escapeHtml(item.grade)}</span></div>`).join("") || `<p>연결된 장기 전적 데이터가 없습니다.</p>`}</div></section>`;
   $("#player-dialog").showModal();
 }
 
@@ -343,6 +651,7 @@ function renderEverything() {
   renderRoster();
   renderSelectedStage();
   renderInsights();
+  if ($("#view-draft").classList.contains("is-active")) renderDraft();
   if ($("#view-players").classList.contains("is-active")) renderPlayerDirectory();
   if ($("#view-games").classList.contains("is-active")) renderGames();
   window.lucide?.createIcons();
@@ -351,20 +660,32 @@ function renderEverything() {
 function resetSession() {
   state.selected = [];
   state.teams = null;
+  state.draftActions = [];
   saveSelection();
+  activateView("planner");
   renderEverything();
+}
+
+function activateView(view) {
+  if (view === "draft" && !state.teams) {
+    showToast("먼저 참가자 10명을 편성하세요.");
+    return false;
+  }
+  $$(".nav-item").forEach((button) => button.classList.toggle("is-active", button.dataset.view === view));
+  $$(".app-view").forEach((section) => section.classList.toggle("is-active", section.id === `view-${view}`));
+  if (view === "draft") renderDraft();
+  if (view === "players") renderPlayerDirectory();
+  if (view === "games") renderGames();
+  window.scrollTo({ top: 0, behavior: "smooth" });
+  window.lucide?.createIcons();
+  return true;
 }
 
 document.addEventListener("click", (event) => {
   const viewButton = event.target.closest("[data-view]");
-  if (viewButton) {
-    const view = viewButton.dataset.view;
-    $$(".nav-item").forEach((button) => button.classList.toggle("is-active", button === viewButton));
-    $$(".app-view").forEach((section) => section.classList.toggle("is-active", section.id === `view-${view}`));
-    if (view === "players") renderPlayerDirectory();
-    if (view === "games") renderGames();
-    window.scrollTo({ top: 0, behavior: "smooth" });
-  }
+  if (viewButton) activateView(viewButton.dataset.view);
+  const openDraft = event.target.closest("[data-open-draft]");
+  if (openDraft) activateView("draft");
   const roleButton = event.target.closest("[data-role-filter]");
   if (roleButton) { state.roleFilter = roleButton.dataset.roleFilter; renderRoleFilters(); renderRoster(); }
   const playerSelect = event.target.closest("[data-player-select]");
@@ -372,6 +693,7 @@ document.addEventListener("click", (event) => {
     const id = playerSelect.dataset.playerSelect;
     state.selected = state.selected.includes(id) ? state.selected.filter((item) => item !== id) : [...state.selected, id];
     state.teams = null;
+    state.draftActions = [];
     saveSelection();
     renderEverything();
   }
@@ -379,6 +701,7 @@ document.addEventListener("click", (event) => {
   if (removePlayer) {
     state.selected = state.selected.filter((id) => id !== removePlayer.dataset.removePlayer);
     state.teams = null;
+    state.draftActions = [];
     saveSelection();
     renderEverything();
   }
@@ -388,10 +711,16 @@ document.addEventListener("click", (event) => {
   if (swapButton && state.teams) {
     const role = swapButton.dataset.swapRole;
     [state.teams.blue[role], state.teams.red[role]] = [state.teams.red[role], state.teams.blue[role]];
+    state.draftActions = [];
     renderEverything();
   }
   const sideButton = event.target.closest("[data-side]");
-  if (sideButton) { state.mySide = sideButton.dataset.side; renderInsights(); }
+  if (sideButton) { state.mySide = sideButton.dataset.side; renderInsights(); if (state.teams) renderDraft(); }
+  const draftCandidate = event.target.closest("[data-draft-candidate]");
+  if (draftCandidate) {
+    const candidate = state.draftCandidates[Number(draftCandidate.dataset.draftCandidate)];
+    if (candidate) applyDraftAction(candidate.champion, candidate.role, candidate);
+  }
 });
 
 $("#roster-search").addEventListener("input", (event) => { state.rosterQuery = event.target.value; renderRoster(); });
@@ -403,9 +732,18 @@ $("#load-recent").addEventListener("click", () => {
   const latest = state.data.games[0].teams.flatMap((team) => team.players.map((entry) => state.data.players.find((player) => player.name === entry.player)?.id)).filter(Boolean);
   state.selected = [...new Set(latest)].slice(0, 10);
   state.teams = null;
+  state.draftActions = [];
   saveSelection();
   renderEverything();
   showToast("가장 최근 경기 참가자 10명을 불러왔습니다.");
+});
+$("#draft-undo").addEventListener("click", () => { state.draftActions.pop(); renderDraft(); window.lucide?.createIcons(); });
+$("#draft-reset").addEventListener("click", () => { state.draftActions = []; renderDraft(); window.lucide?.createIcons(); });
+$("#draft-manual-apply").addEventListener("click", () => {
+  const query = $("#draft-champion-search").value.trim();
+  const champion = knownChampionNames().find((name) => name.toLowerCase() === query.toLowerCase());
+  if (!champion) return showToast("목록에 있는 정확한 챔피언 이름을 입력하세요.");
+  applyDraftAction(champion, $("#draft-role-select").value);
 });
 $("#dialog-close").addEventListener("click", () => $("#player-dialog").close());
 $("#player-dialog").addEventListener("click", (event) => { if (event.target === $("#player-dialog")) $("#player-dialog").close(); });

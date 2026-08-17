@@ -5,10 +5,11 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <meta name="robots" content="noindex,nofollow">
   <meta name="theme-color" content="#0b1220">
+  <link rel="icon" href="data:,">
   <title>내전 데스크</title>
   <link rel="preconnect" href="https://cdn.jsdelivr.net">
   <link rel="stylesheet" href="https://cdn.jsdelivr.net/gh/orioncactus/pretendard/dist/web/static/pretendard.css">
-  <link rel="stylesheet" href="styles.css?v=20260818-6">
+  <link rel="stylesheet" href="styles.css?v=20260818-8">
 </head>
 <body>
   <header class="topbar">
@@ -18,6 +19,7 @@
     </a>
     <nav class="primary-nav" aria-label="주요 화면">
       <button class="nav-item is-active" data-view="planner">오늘 내전</button>
+      <button class="nav-item" data-view="draft">밴픽</button>
       <button class="nav-item" data-view="players">참가자</button>
       <button class="nav-item" data-view="games">경기 기록</button>
     </nav>
@@ -114,6 +116,64 @@
       </div>
     </section>
 
+    <section class="app-view" id="view-draft" aria-labelledby="draft-title">
+      <header class="page-heading draft-page-heading">
+        <div>
+          <h1 id="draft-title">내전 밴픽 도우미</h1>
+          <p>표준 20턴 순서에 맞춰 현재 차례의 밴·픽 후보를 다시 계산합니다.</p>
+        </div>
+        <div class="draft-header-actions">
+          <button class="ghost-button" id="draft-undo" disabled><i data-lucide="undo-2" aria-hidden="true"></i>되돌리기</button>
+          <button class="ghost-button" id="draft-reset" disabled><i data-lucide="rotate-ccw" aria-hidden="true"></i>밴픽 초기화</button>
+        </div>
+      </header>
+
+      <div class="draft-shell">
+        <section class="draft-board" aria-label="밴픽 현황">
+          <div class="draft-turn-banner" id="draft-turn-banner"></div>
+          <div class="draft-team-grid">
+            <article class="draft-team blue-draft-team">
+              <header><div><span class="team-dot"></span><h2>블루 팀</h2></div><span id="draft-blue-label">-</span></header>
+              <div class="draft-ban-strip" id="draft-blue-bans"></div>
+              <div class="draft-pick-list" id="draft-blue-picks"></div>
+            </article>
+            <article class="draft-team red-draft-team">
+              <header><div><span class="team-dot"></span><h2>레드 팀</h2></div><span id="draft-red-label">-</span></header>
+              <div class="draft-ban-strip" id="draft-red-bans"></div>
+              <div class="draft-pick-list" id="draft-red-picks"></div>
+            </article>
+          </div>
+        </section>
+
+        <aside class="draft-recommendations" aria-labelledby="draft-recommend-title">
+          <div class="recommend-heading">
+            <div>
+              <h2 id="draft-recommend-title">현재 추천</h2>
+              <p id="draft-recommend-copy">팀 편성 후 추천을 확인할 수 있습니다.</p>
+            </div>
+            <span class="draft-progress" id="draft-progress">0/20</span>
+          </div>
+          <div class="draft-candidate-list" id="draft-candidate-list"></div>
+          <details class="manual-draft-entry">
+            <summary>다른 챔피언 직접 적용</summary>
+            <div class="manual-draft-controls">
+              <label>
+                <span>챔피언</span>
+                <input id="draft-champion-search" type="search" list="draft-champion-options" placeholder="챔피언 이름 입력">
+                <datalist id="draft-champion-options"></datalist>
+              </label>
+              <label id="draft-role-wrap">
+                <span>배정 라인</span>
+                <select id="draft-role-select"></select>
+              </label>
+              <button class="primary-button" id="draft-manual-apply">현재 턴에 적용</button>
+            </div>
+          </details>
+          <p class="draft-method-note">점수는 배정 라인, 내전 반복 사용, 승률 표본 보정, 장기 숙련을 합산한 이 내전 전용 참고값입니다.</p>
+        </aside>
+      </div>
+    </section>
+
     <section class="app-view" id="view-players" aria-labelledby="players-title">
       <header class="page-heading">
         <div>
@@ -165,6 +225,6 @@
 
   <div class="toast" id="toast" role="status" aria-live="polite"></div>
   <script src="https://unpkg.com/lucide@0.468.0/dist/umd/lucide.min.js"></script>
-  <script type="module" src="app.js?v=20260818-6"></script>
+  <script type="module" src="app.js?v=20260818-8"></script>
 </body>
 </html>
