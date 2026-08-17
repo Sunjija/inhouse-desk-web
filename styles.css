@@ -123,11 +123,12 @@ button:active:not(:disabled) { transform: translateY(1px) scale(.985); }
 .search-field kbd { position: absolute; right: 11px; top: 10px; min-width: 22px; padding: 1px 6px; border: 1px solid var(--line); border-radius: 4px; color: var(--quiet); background: var(--surface-2); text-align: center; font-size: 11px; }
 .wide-search { width: min(380px, 35vw); margin: 0; }
 
-.role-filters { display: grid; grid-template-columns: repeat(6, minmax(0, 1fr)); margin: 0 14px 12px; overflow: hidden; border: 1px solid var(--line); border-radius: 6px; background: #0c1422; }
-.role-filter { min-width: 0; height: 38px; padding: 0 4px; border: 0; border-right: 1px solid var(--line); background: transparent; color: var(--quiet); font-size: 13px; font-weight: 700; cursor: pointer; }
-.role-filter:last-child { border-right: 0; }
-.role-filter:hover { background: var(--surface-2); color: var(--text); }
-.role-filter.is-active { background: #222b3a; color: var(--filter-accent, var(--gold)); box-shadow: inset 0 -2px var(--filter-accent, var(--gold)); }
+.role-filters { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 6px; margin: 0 14px 14px; padding: 6px; border: 1px solid var(--line); border-radius: 6px; background: #0c1422; }
+.role-filter { min-width: 0; height: 40px; display: inline-flex; align-items: center; justify-content: center; gap: 7px; padding: 0 8px; border: 1px solid #223047; border-radius: 5px; background: #111b2a; color: var(--muted); font-size: 14px; font-weight: 700; cursor: pointer; }
+.role-filter::before { content: ""; width: 6px; height: 6px; flex: 0 0 auto; border-radius: 50%; background: var(--filter-accent, var(--gold)); opacity: .38; }
+.role-filter:hover { border-color: var(--line-strong); background: var(--surface-2); color: var(--text); }
+.role-filter.is-active { border-color: var(--filter-accent, var(--gold)); background: color-mix(in srgb, var(--filter-accent, var(--gold)) 12%, #111b2a); color: var(--text); }
+.role-filter.is-active::before { opacity: 1; }
 .role-filter[data-role-filter="탑"] { --filter-accent: #f1cf70; }
 .role-filter[data-role-filter="정글"] { --filter-accent: #67d7a8; }
 .role-filter[data-role-filter="미드"] { --filter-accent: #b49bff; }
