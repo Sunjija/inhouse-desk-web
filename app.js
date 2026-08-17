@@ -362,7 +362,8 @@ function candidateScore(player, item, mode = "pick", role = player.primaryRole) 
   const roleMatch = item.role?.includes(player.primaryRole) ? 8 : 0;
   const playerStrength = assignedPower(player, role);
   const tierThreat = mode === "ban" ? clamp((playerStrength - 50) * 1.5, -8, 20) : clamp((playerStrength - 45) * .18, -2, 5);
-  return Math.round(repeated + success + mastery + roleMatch + tierThreat);
+  const teamGame = (teamGameBaseline(item.champion) - 65) * (mode === "ban" ? .10 : .07);
+  return Math.round(repeated + success + mastery + roleMatch + tierThreat + teamGame);
 }
 
 function teamCandidates(team, limit = 5, mode = "pick") {
@@ -450,6 +451,84 @@ function knownChampionNames() {
   ]))].sort((a, b) => a.localeCompare(b, "ko"));
 }
 
+function championTeamContext(champion) {
+  return state.data.championContext?.[champion] || null;
+}
+
+function teamGameBaseline(champion) {
+  const context = championTeamContext(champion);
+  if (!context) return 60;
+  return context.meta * .28 + context.lane * .15 + context.teamfight * .30 + context.blind * .15 + context.scaling * .12;
+}
+
+function teamGameTraits(context, role) {
+  const tags = new Set(context?.tags || []);
+  const magic = tags.has("ap");
+  const hybrid = tags.has("hybrid");
+  const support = role === "서폿";
+  const lowDamageFront = tags.has("tank") || tags.has("front") || tags.has("enchanter") || tags.has("utility");
+  const physical = hybrid
+    || tags.has("ad")
+    || tags.has("marksman")
+    || tags.has("bruiser")
+    || tags.has("assassin")
+    || tags.has("duelist")
+    || (role === "원딜" && !magic)
+    || (!magic && !support && !lowDamageFront && ["탑", "정글"].includes(role));
+  return {
+    magic: magic || hybrid,
+    physical,
+    engage: tags.has("engage"),
+    frontline: ["tank", "front", "bruiser"].some((tag) => tags.has(tag)),
+    dps: role === "원딜" || tags.has("scaling") || tags.has("reset") || tags.has("objective"),
+    peel: ["peel", "protect", "enchanter", "shield", "disengage", "utility"].some((tag) => tags.has(tag)),
+    plans: ["dive", "poke", "teamfight", "pick", "side", "siege"].filter((tag) => tags.has(tag)),
+  };
+}
+
+function draftedTeamGameEntries(side) {
+  return draftActions(side, "pick").map((action) => ({
+    context: championTeamContext(action.champion),
+    role: action.role,
+  })).filter((entry) => entry.context);
+}
+
+function teamGameAdjustment(champion, side, role, mode) {
+  const context = championTeamContext(champion);
+  if (!context) return { score: 0, reason: "" };
+  const own = draftedTeamGameEntries(side);
+  const candidate = teamGameTraits(context, role);
+  const ownTraits = own.map((entry) => teamGameTraits(entry.context, entry.role));
+  const add = (value, reason) => contributions.push({ value, reason });
+  const contributions = [];
+  const baseline = teamGameBaseline(champion);
+  add(clamp((baseline - 65) * .14, -3.5, 4), context.teamfight >= 80 ? "한타 가치" : context.blind >= 80 ? "선픽 안정성" : context.lane >= 80 ? "라인 주도권" : "팀게임 밸류");
+
+  if (own.length >= 2) {
+    const count = (key) => ownTraits.filter((traits) => traits[key]).length;
+    if (!count("engage")) add(candidate.engage ? 4.5 : -2.5, "이니시 수단 보완");
+    if (!count("frontline")) add(candidate.frontline ? 4 : -2, "앞라인 보완");
+    if (!count("magic")) add(candidate.magic ? 3.5 : -2, "AP 피해 보완");
+    if (!count("physical")) add(candidate.physical ? 3.5 : -2, "AD 피해 보완");
+    if (own.length >= 3 && !count("dps")) add(candidate.dps ? 3.5 : -2.5, "지속 화력 보완");
+    if (own.length >= 3 && !count("peel")) add(candidate.peel ? 2.5 : 0, "딜러 보호 보완");
+
+    const planCounts = new Map();
+    ownTraits.flatMap((traits) => traits.plans).forEach((plan) => planCounts.set(plan, (planCounts.get(plan) || 0) + 1));
+    const planMatch = candidate.plans.find((plan) => (planCounts.get(plan) || 0) >= 2);
+    if (planMatch) add(2.5, `${planMatch === "poke" || planMatch === "siege" ? "포킹" : planMatch === "dive" ? "돌진" : planMatch === "side" ? "사이드" : "한타"} 플랜 연결`);
+
+    if (own.length >= 3 && count("magic") >= 3 && candidate.magic && !candidate.physical) add(-4, "AP 편중 위험");
+    if (own.length >= 3 && count("physical") >= 3 && candidate.physical && !candidate.magic) add(-4, "AD 편중 위험");
+  }
+
+  const raw = contributions.reduce((sum, item) => sum + item.value, 0);
+  const multiplier = mode === "ban" ? .65 : 1;
+  const score = clamp(raw * multiplier, -8, mode === "ban" ? 7 : 10);
+  const reason = contributions.filter((item) => item.value > 0).sort((a, b) => b.value - a.value)[0]?.reason || "";
+  return { score, reason };
+}
+
 function roleCandidateEntries(player, role, mode) {
   const merged = new Map();
   player.pool.forEach((item, rank) => {
@@ -476,9 +555,11 @@ function roleCandidateEntries(player, role, mode) {
     const targetValue = mode === "ban" ? Math.min(7, internalGames * 1.5) : 0;
     const playerStrength = assignedPower(player, role);
     const tierThreat = mode === "ban" ? clamp((playerStrength - 50) * 1.5, -8, 20) : clamp((playerStrength - 45) * .16, -2, 4);
+    const sourceSide = mode === "ban" ? (draftCurrentStep()?.side === "blue" ? "red" : "blue") : draftCurrentStep()?.side;
+    const teamGame = teamGameAdjustment(entry.champion, sourceSide, role, mode);
     const score = clamp(Math.round(
       24 + mastery * .24 + confidence * 11 + (adjustedWinRate - .5) * 12
-        + declared + grade * .8 + rankValue + targetValue + tierThreat
+        + declared + grade * .8 + rankValue + targetValue + tierThreat + teamGame.score
     ), 42, 96);
     return {
       champion: entry.champion,
@@ -490,6 +571,8 @@ function roleCandidateEntries(player, role, mode) {
       mastery,
       playerStrength,
       tierThreat,
+      teamGameBonus: teamGame.score,
+      teamGameReason: teamGame.reason,
       grade: entry.pool?.grade || (internalGames ? "내전 기록" : "가능"),
     };
   });
@@ -548,6 +631,7 @@ function draftRecommendations(limit = 7) {
 
 function draftEvidence(item) {
   if (item.fallback) return "챔프폭 근거 부족 · 라인 공용 후보";
+  if (item.teamGameBonus >= 4 && item.teamGameReason) return `조합 보완 · ${item.teamGameReason}`;
   if (item.tierThreat >= 8) return `고티어 핵심픽 · 숙련 ${Math.round(item.mastery)}`;
   if (item.internalGames) return `내전 ${item.internalGames}경기 · 보정 승률 ${Math.round(item.adjustedWinRate * 100)}%`;
   return `${item.grade} · 장기 숙련 ${Math.round(item.mastery)}`;
