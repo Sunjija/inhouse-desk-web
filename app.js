@@ -172,6 +172,8 @@ function applyLoadedData(data) {
   state.data = data;
   state.selected = state.selected.filter((id) => state.data.players.some((player) => player.id === id)).slice(0, 10);
   $("#data-date").textContent = state.data.meta.dataDate;
+  $("#record-count-label").textContent = `${state.data.meta.gameCount}경기 검수 데이터`;
+  $("#games-summary").textContent = `${state.data.meta.gameCount}경기 결과를 최신순으로 확인합니다. 20분 미만 경기는 숙련 판단에서 별도 주의가 표시됩니다.`;
   renderEverything();
   loadChampionImages();
 }
@@ -907,16 +909,17 @@ $("#unlock-form").addEventListener("submit", async (event) => {
 });
 
 async function boot() {
+  const cacheBuster = Date.now();
   const forceEncrypted = new URLSearchParams(location.search).has("encrypted");
   const isLocal = ["127.0.0.1", "localhost"].includes(location.hostname) && !forceEncrypted;
   if (isLocal) {
-    const response = await fetch("data.json", { cache: "no-store" });
+    const response = await fetch(`data.json?v=${cacheBuster}`, { cache: "no-store" });
     if (!response.ok) throw new Error(`데이터를 불러오지 못했습니다 (${response.status})`);
     applyLoadedData(await response.json());
     return;
   }
 
-  const response = await fetch("data.enc.json", { cache: "no-store" });
+  const response = await fetch(`data.enc.json?v=${cacheBuster}`, { cache: "no-store" });
   if (!response.ok) throw new Error(`암호화 데이터를 불러오지 못했습니다 (${response.status})`);
   state.encryptedPayload = await response.json();
   const cachedPassword = sessionStorage.getItem("inhouse:unlock");

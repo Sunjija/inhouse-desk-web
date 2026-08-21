@@ -15,7 +15,7 @@
   <header class="topbar">
     <a class="brand" href="#planner" aria-label="내전 데스크 홈">
       <span class="brand-mark" aria-hidden="true"><i></i><i></i><i></i></span>
-      <span><strong>내전 데스크</strong><small>18경기 검수 데이터</small></span>
+      <span><strong>내전 데스크</strong><small id="record-count-label">검수 데이터 불러오는 중</small></span>
     </a>
     <nav class="primary-nav" aria-label="주요 화면">
       <button class="nav-item is-active" data-view="planner">오늘 내전</button>
@@ -194,7 +194,7 @@
       <header class="page-heading">
         <div>
           <h1 id="games-title">검수 경기 기록</h1>
-          <p>18경기 결과를 최신순으로 확인합니다. 20분 미만 경기는 숙련 판단에서 별도 주의가 표시됩니다.</p>
+          <p id="games-summary">검수 경기 결과를 최신순으로 불러옵니다.</p>
         </div>
       </header>
       <div class="game-list" id="game-list"></div>
@@ -225,6 +225,6 @@
 
   <div class="toast" id="toast" role="status" aria-live="polite"></div>
   <script src="https://unpkg.com/lucide@0.468.0/dist/umd/lucide.min.js"></script>
-  <script type="module" src="app.js?v=20260818-12"></script>
+  <script type="module" src="app.js?v=20260821-1"></script>
 </body>
 </html>
