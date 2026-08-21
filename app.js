@@ -760,15 +760,16 @@ function gameDetailMarkup(game) {
 }
 
 function renderGames() {
-  $("#game-list").innerHTML = state.data.games.map((game, index) => {
+  const games = [...state.data.games].sort((a, b) => Number(b.id) - Number(a.id));
+  $("#game-list").innerHTML = games.map((game) => {
     const winner = game.teams.find((team) => team.result === "승");
     const preview = winner.players.map((player) => `${player.player.split(" (")[0]} ${player.champion}`).join(" · ");
-    return `<details class="game-row" data-game-index="${index}"><summary><span class="game-id">GAME ${String(game.id).padStart(2, "0")}</span><span class="game-date">${escapeHtml(game.date)}</span><span class="game-preview">승리 팀 · ${escapeHtml(preview)}</span><span class="game-time">${escapeHtml(game.duration)}${game.shortGame ? `<span class="short-badge">단기</span>` : ""}</span></summary><div class="game-detail" data-game-detail></div></details>`;
+    return `<details class="game-row" data-game-id="${game.id}"><summary><span class="game-id">GAME ${String(game.id).padStart(2, "0")}</span><span class="game-date">${escapeHtml(game.date)}</span><span class="game-preview">승리 팀 · ${escapeHtml(preview)}</span><span class="game-time">${escapeHtml(game.duration)}${game.shortGame ? `<span class="short-badge">단기</span>` : ""}</span></summary><div class="game-detail" data-game-detail></div></details>`;
   }).join("");
 
   $$(".game-row").forEach((details) => details.addEventListener("toggle", () => {
     if (!details.open || details.dataset.loaded === "true") return;
-    const game = state.data.games[Number(details.dataset.gameIndex)];
+    const game = state.data.games.find((item) => Number(item.id) === Number(details.dataset.gameId));
     details.querySelector("[data-game-detail]").innerHTML = gameDetailMarkup(game);
     details.dataset.loaded = "true";
   }));
