@@ -31,6 +31,7 @@ const $ = (selector, root = document) => root.querySelector(selector);
 const $$ = (selector, root = document) => [...root.querySelectorAll(selector)];
 const escapeHtml = (value = "") => String(value).replace(/[&<>'"]/g, (char) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", "'": "&#39;", '"': "&quot;" }[char]));
 const percent = (value) => `${Math.round(Number(value || 0) * 100)}%`;
+const percentOrUnknown = (value) => value == null || value === "" ? "미확인" : percent(value);
 const compact = (value) => Number(value || 0).toFixed(2).replace(/\.00$/, "");
 const displayPlayerName = (player) => player.displayName || player.name;
 
@@ -782,7 +783,7 @@ function openPlayerDetail(id) {
   const tierLabel = player.adjustedTier
     ? `${player.currentTier} / ${player.peakTier} · 보정 ${player.adjustedTier}`
     : `${player.currentTier} / ${player.peakTier}`;
-  const soloPool = (player.soloPool || []).map((item) => `<div class="pool-row">${championPortrait(item.champion, 34)}<span><strong>${escapeHtml(item.champion)}</strong><small>${escapeHtml(item.role)} · ${item.games}판 · 승률 ${percent(item.winRate)}</small></span></div>`).join("");
+  const soloPool = (player.soloPool || []).map((item) => `<div class="pool-row">${championPortrait(item.champion, 34)}<span><strong>${escapeHtml(item.champion)}</strong><small>${escapeHtml(item.role)} · ${item.games}판 · 승률 ${percentOrUnknown(item.winRate)}</small></span></div>`).join("");
   $("#player-detail").innerHTML = `<div class="detail-head"><h2>${escapeHtml(displayPlayerName(player))}</h2><p>${escapeHtml(player.riotId)} · 주라인 ${escapeHtml(player.primaryRole)}${secondary !== "없음" ? ` · 가능 ${escapeHtml(secondary)}` : ""}</p></div><div class="detail-facts"><div><span>현재 / 최고 티어</span><strong>${escapeHtml(tierLabel)}</strong></div><div><span>내전 표본</span><strong>${player.games}경기 ${player.wins}승 ${player.losses}패</strong></div><div><span>승률</span><strong>${percent(player.winRate)}</strong></div><div><span>KDA</span><strong>${compact(player.kda)}</strong></div></div><section class="detail-section"><h3>내전 챔피언 기록</h3><table class="record-table"><thead><tr><th>챔피언</th><th>라인</th><th>경기</th><th>승률</th><th>KDA</th><th>표본</th></tr></thead><tbody>${player.championRecords.slice(0, 12).map((record) => `<tr><td><strong>${escapeHtml(record.champion)}</strong></td><td>${record.role}</td><td>${record.games}</td><td>${percent(record.winRate)}</td><td>${compact(record.kda)}</td><td>${escapeHtml(record.sample)}</td></tr>`).join("")}</tbody></table></section><section class="detail-section"><h3>솔랭 챔프폭 <small>20판 이상</small></h3><div class="pool-list">${soloPool || `<p>20판 이상 확인된 솔랭 챔피언이 없습니다.</p>`}</div></section><section class="detail-section"><h3>전적 기반 숙련도</h3><div class="pool-list">${player.pool.slice(0, 14).map((item) => `<div class="pool-row">${championPortrait(item.champion, 34)}<span><strong>${escapeHtml(item.champion)}</strong><small>${escapeHtml(item.role)} · 숙련 ${Math.round(item.masteryScore)}</small></span><span class="grade" data-grade="${escapeHtml(item.grade)}">${escapeHtml(item.grade)}</span></div>`).join("") || `<p>연결된 장기 전적 데이터가 없습니다.</p>`}</div></section>`;
   $("#player-dialog").showModal();
 }
